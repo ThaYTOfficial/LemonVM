@@ -10,7 +10,7 @@ ISO_URL="${ISO_URL:-}"
 VNC_PORT="${VNC_PORT:-5900}" 
 EXTRA_QEMU_ARGS="${EXTRA_QEMU_ARGS:-}"
 
-VM_DIR="/vm/${VM_NAME}"
+VM_DIR="/home/container/vm/${VM_NAME}"
 IMG_QCOW2="${VM_DIR}/${VM_NAME}.qcow2"
 ISO_PATH="${VM_DIR}/boot.iso"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE.fd"
