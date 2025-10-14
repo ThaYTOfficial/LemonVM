@@ -17,6 +17,7 @@ OVMF_CODE="/usr/share/OVMF/OVMF_CODE.fd"
 OVMF_VARS="${VM_DIR}/OVMF_VARS.fd"
 
 mkdir -p "${VM_DIR}"
+# create writable copy of VARS once
 [ -f "${OVMF_VARS}" ] || cp /usr/share/OVMF/OVMF_VARS.fd "${OVMF_VARS}"
 KVM_OPTS=""
 if [ -e /dev/kvm ]; then
@@ -30,6 +31,7 @@ if ! [[ "${VNC_PORT}" =~ ^[0-9]+$ ]] || [ "${VNC_PORT}" -lt 5900 ] || [ "${VNC_P
 fi
 VNC_DISPLAY=$(( VNC_PORT - 5900 ))
 VNC_OPT="-vnc 0.0.0.0:${VNC_DISPLAY}"   # binds on all interfaces
+
 
 # Create disk
 if [ ! -f "${IMG_QCOW2}" ]; then
@@ -65,7 +67,8 @@ exec qemu-system-x86_64 \
   -smp "${CPU_CORES}" -m "${RAM_MB}" \
   -drive if=ide,file="${IMG_QCOW2}",format=qcow2,discard=unmap \
   -drive media=cdrom,file="${ISO_PATH}" \
-  -bios "${OVMF_CODE}" -drive if=pflash,format=raw,unit=1,file="${OVMF_VARS}",readonly=off \
+  -drive if=pflash,format=raw,unit=0,readonly=on,file="${OVMF_CODE}" \
+  -drive if=pflash,format=raw,unit=1,file="${OVMF_VARS}" \
   ${NET_OPTS} \
   ${GRAPHICS_OPTS} \
   ${EXTRA_QEMU_ARGS}
