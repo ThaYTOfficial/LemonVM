@@ -14,7 +14,7 @@ ENV VM_NAME=win10 \
     RAM_MB=4096 \
     CPU_CORES=2 \
     BOOT=iso \
-    ISO_URL="" \
+    ISO_URL="https://archive.org/download/tiny-10-23-h2/tiny10%20x64%2023h2.iso" \
     VNC_PORT=5900 \
     EXTRA_QEMU_ARGS=""
 
