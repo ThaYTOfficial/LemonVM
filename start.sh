@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# === Environment variables (can be overridden by Pterodactyl) ===
 VM_NAME="${VM_NAME:-win10}"
 DISK_SIZE_GB="${DISK_SIZE_GB:-40}"
 RAM_MB="${RAM_MB:-4096}"
 CPU_CORES="${CPU_CORES:-2}"
-BOOT="${BOOT:-iso}"          
+BOOT="${BOOT:-iso}"
 ISO_URL="${ISO_URL:-}"
-VNC_PORT="${VNC_PORT:-5900}" 
+# Automatically use Pterodactyl’s allocated port if provided
+VNC_PORT="${VNC_PORT:-${SERVER_PORT:-6000}}"
 EXTRA_QEMU_ARGS="${EXTRA_QEMU_ARGS:-}"
 
+# === Paths (inside container) ===
 VM_DIR="/home/container/vm/${VM_NAME}"
 IMG_QCOW2="${VM_DIR}/${VM_NAME}.qcow2"
 ISO_PATH="${VM_DIR}/boot.iso"
@@ -17,50 +20,67 @@ OVMF_CODE="/usr/share/OVMF/OVMF_CODE.fd"
 OVMF_VARS="${VM_DIR}/OVMF_VARS.fd"
 
 mkdir -p "${VM_DIR}"
-# create writable copy of VARS once
-[ -f "${OVMF_VARS}" ] || cp /usr/share/OVMF/OVMF_VARS.fd "${OVMF_VARS}"
+
+# === Copy writable OVMF vars file once ===
+if [ ! -f "${OVMF_VARS}" ]; then
+  cp /usr/share/OVMF/OVMF_VARS.fd "${OVMF_VARS}"
+fi
+
+# === Enable KVM if available ===
 KVM_OPTS=""
 if [ -e /dev/kvm ]; then
   KVM_OPTS="--enable-kvm -cpu host"
 else
+  echo "[INFO] KVM not available; using software emulation (TCG)"
   KVM_OPTS="-cpu qemu64"
 fi
-if ! [[ "${VNC_PORT}" =~ ^[0-9]+$ ]] || [ "${VNC_PORT}" -lt 5900 ] || [ "${VNC_PORT}" -gt 5999 ]; then
-  echo "VNC_PORT must be 5900–5999 (got ${VNC_PORT})."
+
+# === Configure VNC to bind on the allocated port ===
+if ! [[ "${VNC_PORT}" =~ ^[0-9]+$ ]]; then
+  echo "Invalid VNC_PORT='${VNC_PORT}', must be numeric."
   exit 1
 fi
-VNC_DISPLAY=$(( VNC_PORT - 5900 ))
-VNC_OPT="-vnc 0.0.0.0:${VNC_DISPLAY}"   # binds on all interfaces
 
+# QEMU’s -vnc uses display numbers (port = 5900 + display)
+if [ "${VNC_PORT}" -ge 5900 ]; then
+  VNC_DISPLAY=$(( VNC_PORT - 5900 ))
+  VNC_OPT="-vnc 0.0.0.0:${VNC_DISPLAY}"
+else
+  # If the port is below 5900, bind directly
+  VNC_OPT="-vnc 0.0.0.0:${VNC_PORT}"
+fi
 
-# Create disk
+echo "[INFO] Using VNC port ${VNC_PORT} (display ${VNC_OPT})"
+
+# === Prepare VM disk ===
 if [ ! -f "${IMG_QCOW2}" ]; then
-  echo "Creating ${DISK_SIZE_GB}G qcow2..."
+  echo "[INFO] Creating ${DISK_SIZE_GB}G qcow2 disk..."
   qemu-img create -f qcow2 "${IMG_QCOW2}" ${DISK_SIZE_GB}G
 fi
 
-# ISO boot path (Windows 10 official ISO or your licensed ISO)
+# === Handle ISO ===
 if [ "${BOOT}" = "iso" ]; then
   if [ -z "${ISO_URL}" ]; then
-    echo "BOOT=iso but ISO_URL is empty. Provide a direct download URL or pre-mount an ISO."
+    echo "BOOT=iso but ISO_URL is empty. Please provide a valid ISO URL."
     exit 1
   fi
   if [ ! -f "${ISO_PATH}" ]; then
-    echo "Downloading installer ISO..."
+    echo "[INFO] Downloading installer ISO..."
     curl -L "${ISO_URL}" -o "${ISO_PATH}"
   fi
 else
-  echo "For Windows, set BOOT=iso and ISO_URL=<win10_iso_url>"
+  echo "Unsupported BOOT mode '${BOOT}'. Use BOOT=iso."
   exit 1
 fi
 
-# Networking (user-mode; optional, helpful if you want RDP later)
+# === Networking (user-mode; allows internet inside VM) ===
 NET_OPTS="-netdev user,id=n1 -device e1000,netdev=n1"
 
-# Graphics: VNC + basic VGA + USB tablet improves mouse accuracy in VNC
+# === Graphics / Input ===
 GRAPHICS_OPTS="-device VGA -device usb-ehci -device usb-tablet ${VNC_OPT}"
 
-# Storage: use IDE/SATA for installer compatibility (avoids virtio driver hassles)
+# === Run QEMU ===
+echo "[INFO] Starting QEMU VM '${VM_NAME}'..."
 exec qemu-system-x86_64 \
   ${KVM_OPTS} \
   -machine q35,accel=kvm:tcg \
