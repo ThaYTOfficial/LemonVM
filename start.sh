@@ -39,9 +39,39 @@ else
   echo "[WARN] KVM not available — using software emulation (TCG)."
 fi
 
-# === VNC DISPLAY CALC ===
-VNC_DISPLAY=$((VNC_PORT - 5900))
-VNC_OPT="-vnc 0.0.0.0:${VNC_DISPLAY}"
+# === VNC BINDING / PROXY ===
+# QEMU expects a DISPLAY (port = 5900 + DISPLAY). If your allocated port is <5900,
+# we bind QEMU to :0 (5900) and forward $VNC_PORT -> 5900 using socat.
+if ! [[ "${VNC_PORT}" =~ ^[0-9]+$ ]]; then
+  echo "[ERROR] SERVER_PORT/VNC_PORT must be numeric (got: '${VNC_PORT}')."
+  exit 1
+fi
+
+VNC_FORWARD_PID=""
+if [ "${VNC_PORT}" -ge 5900 ]; then
+  VNC_DISPLAY=$(( VNC_PORT - 5900 ))
+  VNC_OPT="-vnc 0.0.0.0:${VNC_DISPLAY}"
+  echo "[INFO] VNC will listen directly on ${VNC_PORT} (display :${VNC_DISPLAY})"
+else
+  # Need socat to proxy container:$VNC_PORT -> 127.0.0.1:5900
+  if ! command -v socat >/dev/null 2>&1; then
+    echo "[ERROR] socat is required for ports < 5900. Install socat in the image."
+    exit 1
+  fi
+  VNC_OPT="-vnc 127.0.0.1:0"  # QEMU listens on 127.0.0.1:5900 (display :0)
+  echo "[INFO] VNC will listen on internal 5900 (display :0); proxying ${VNC_PORT} -> 5900 with socat"
+  # Start TCP forwarder in background
+  socat TCP-LISTEN:${VNC_PORT},fork,reuseaddr TCP:127.0.0.1:5900 &
+  VNC_FORWARD_PID=$!
+fi
+
+# Clean up proxy on exit
+cleanup() {
+  if [ -n "${VNC_FORWARD_PID}" ]; then
+    kill "${VNC_FORWARD_PID}" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
 
 # === Base hardware (installer-friendly: IDE disk + e1000 NIC) ===
 # USB tablet needs a USB controller; add usb-ehci then usb-tablet
@@ -59,7 +89,7 @@ if [ ! -f "${MARK_FILE}" ]; then
       -drive media=cdrom,file="${ISO_PATH}" \
       ${VNC_OPT} || true
   else
-    # headless install (not common for Windows; keep for parity)
+    # headless install (not typical for Windows)
     qemu-system-x86_64 ${KVM_OPTS} ${BASE_HW} \
       -boot d \
       -drive media=cdrom,file="${ISO_PATH}" \
